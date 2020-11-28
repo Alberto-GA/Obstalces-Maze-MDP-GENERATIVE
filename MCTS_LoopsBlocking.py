@@ -45,17 +45,8 @@ def AplicableActionSelection(s,G,c):
     #c = 10           # Exploration coefficient 
     UCB = {}         # Dictionary to save the result of UCB for each action
     
-    for a in s.actions:
-        # CONSIDER ONLY RELEVANT ACTIONS -> avoid infinite loops between 
-        # action Selection and child sampling in the recursive call. However, 
-        # this doesn't prevent from loops in the tree: e.g s0-s1-s5-s4-s0...
-        if a=="Stay":                    continue               
-        elif s.top    and a=="North":    continue    
-        elif s.right  and a=="East":     continue    
-        elif s.left   and a=="West":     continue     
-        elif s.bottom and a=="South":    continue
-        else :                                        # modified UCB formula     
-            UCB[a] = G[s][a]["Q-value"] + c * G[s][a]["Sigma"] * math.sqrt(math.log(G[s]["N"])/G[s][a]["Na"])
+    for a in s.relevActions:                  # modified UCB formula     
+        UCB[a] = G[s][a]["Q-value"] + c * G[s][a]["Sigma"] * math.sqrt(math.log(G[s]["N"])/G[s][a]["Na"])
 
     # choose the relevant action that maximize the UCB formula    
     a_UCB = max(UCB.items(), key=operator.itemgetter(1))[0]
@@ -95,31 +86,24 @@ def initNode(s):
     # NOTE that (all the possible/only relevant) actions are tested.
     # NOTE that the childs are not created in the graph.
     aux = []          # empty list to ease the maximization
-    for a in s.actions:
+    for a in s.relevActions:
         
-        if a=="Stay":                    continue    #Remove lazy actions           
-        elif s.top    and a=="North":    continue    #if you want to con-
-        elif s.right  and a=="East":     continue    #sider only relevant
-        elif s.left   and a=="West":     continue    #actions. Remove if-else
-        elif s.bottom and a=="South":    continue    #to consider all actions
-        else :
-          
-            # Count the initialisation of this action as a visit to Node s
-            G[s]["N"]+=1 
-            
-            # Sample a successor according to the generative model
-            [successor, cost]= s.SampleChild(a)
-            
-            # the Qvalue is the inmediate cost/reward plus the long term
-            # cost/reward that is estimated through a rollout
-            G[s][a]={}
-            G[s][a]["Q-value"] = cost + Rollout(successor)
-            aux.append(G[s][a]["Q-value"])  
-            
-            # Register the visit for this pair s-a
-            G[s][a]["Na"] = 1
-            # Init uncertainty of the subtree below action
-            G[s][a]["Sigma"] = 1
+        # Count the initialisation of this action as a visit to Node s
+        G[s]["N"]+=1 
+        
+        # Sample a successor according to the generative model
+        [successor, cost]= s.SampleChild(a)
+        
+        # the Qvalue is the inmediate cost/reward plus the long term
+        # cost/reward that is estimated through a rollout
+        G[s][a]={}
+        G[s][a]["Q-value"] = cost + Rollout(successor)
+        aux.append(G[s][a]["Q-value"])  
+        
+        # Register the visit for this pair s-a
+        G[s][a]["Na"] = 1
+        # Init uncertainty of the subtree below action
+        G[s][a]["Sigma"] = 1
             
     # Compute the Qvalue of the decision node (V(s)).
     G[s]["V"] = max(aux)  

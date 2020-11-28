@@ -1,3 +1,23 @@
+"""
+              Second enhancement of UCT like algorithm V2
+
+This is the second attempt to improve the performances of UCT. The approach of 
+this algorithm is based on tuning the exploration coefficient in accordance with
+an entropic criteria. There are several ways to define the entropy of a state, 
+and some of them are considered here. However, all of them agree that the 
+entropy of a particular state is higher when the outcome of an action is more 
+uncertain. All in all, in this first approach, the solver will compute the en-
+tropy using information about the domain so it is not using a pure generative
+model. In future approaches we will try to estimate this entropy with enough 
+sampled data.
+
+Again, the only difference with UCT relies on the way the action selection is
+made.
+
+Note: this code can be used with different grid sizes.
+
+
+"""
 #-------------------------------LIBRAIRES------------------------------------#
 import math
 import operator
@@ -41,61 +61,71 @@ def Rollout(s):
 
 #----------------------------------------------------------------------------#    
 """
-The action selection method is the heart of UCT. It is the way the algorithm 
-deals with the exploration-exploitation dilemma. Namely, UCT takes the ideas 
-of bandit problems and applies the UCB formula to solve the conflict. In this
-formula there is a term that votes for exploitation of the best current policy.
-By contrast, the other term is devoted to exploring less visited nodes.
-
-It receives the current Graph as input because this function doesn't modify 
-the graph.
+Three different methods to sample an action according to UCB-EBC. All of them 
+will only take into account relevant actions... if some experiments must be 
+undertaken considering all actions, please replace s.relevActions by s.actions
 
 """
-def ActionSelection(s,G):
-    c = 10           # Exploration coefficient 
-    UCB = {}         # Dictionary to save the result of UCB for each action
+def ActionSelection_Max(s,G):
+    c = [0,2]           # Exploration coefficient bounds 
+    UCB = {}            # Dictionary to save the result of UCB for each action
     
-    for a in s.actions:          # UCB formula
-        UCB[a] = G[s][a]["Q-value"] + c * math.sqrt(math.log(G[s]["N"])/G[s][a]["Na"])
+    # Compute normalised entropy with MaxEntropy
+    en = (c[1]-c[0])*s.MaxEntropy() + c[0]
+    # Compute the adaptive explotration coefficient by rescaling with the 
+    # higher cost/reward
+    c_ebc = 5*en 
+    # CONSIDER ONLY RELEVANT ACTIONS 
+    for a in s.relevActions:
+    
+        # Modified UCB formula                              
+        UCB[a] = G[s][a]["Q-value"] + c_ebc * math.sqrt(math.log(G[s]["N"])/G[s][a]["Na"])
 
-    # choose the action that maximize the UCB formula    
+    # choose the relevant action that maximize the UCB formula    
     a_UCB = max(UCB.items(), key=operator.itemgetter(1))[0]
     return a_UCB
 
 """
-There is a problem with the action selection when "lazy" actions are chosen 
-from the UCB formula because the successor is the same state and this issue 
-comes into conflict with the recursivity. For this reason I've suggested to 
-take into account only relevant actions using the function below. 
-
-WARNING: This choice doesn't seem to be a great idea because the nodes are 
-completely initialised. This means that all the actions are tried and they
-are provided with a first stimate of the Q-value(s,a) thanks to a rollout.
-And where is the problem? Well, this values are initialised but the actions 
-are no longer taken into account through action selection (UCB) resulting in
-a biased situation between relevant and lazy actions.
-
-CONCLUSION: if you want to remove the "lazy" actions to kill loops of type 
-s'=s, only relevant actions must be initialised!!! -> LOOK STEP 2
 
 """
-def RelevantActionSelection(s,G):
+def ActionSelection_Mean(s,G):
     c = [0,2]           # Exploration coefficient bounds 
     UCB = {}         # Dictionary to save the result of UCB for each action
     
-    for a in s.actions:
-        # CONSIDER ONLY RELEVANT ACTIONS -> avoid infinite loops between 
-        # action Selection and child sampling in the recursive call. However, 
-        # this doesn't prevent from loops in the tree: e.g s0-s1-s5-s4-s0...
-        if a=="Stay":                    continue               
-        elif s.top    and a=="North":    continue    
-        elif s.right  and a=="East":     continue    
-        elif s.left   and a=="West":     continue     
-        elif s.bottom and a=="South":    continue
-        else :                                   # UCB formula
-            en = (c[1]-c[0])*s.uncertainty +c[0]
-            c_ebc = 5*en
-            UCB[a] = G[s][a]["Q-value"] + c_ebc * math.sqrt(math.log(G[s]["N"])/G[s][a]["Na"])
+            
+    # Compute normalised entropy with MeanEntropy
+    en = (c[1]-c[0])*s.MeanEntropy() + c[0]
+    # Compute the adaptive explotration coefficient by rescaling with the 
+    # higher cost/reward
+    c_ebc = 5*en 
+        
+    # CONSIDER ONLY RELEVANT ACTIONS 
+    for a in s.relevActions:
+
+        # Modified UCB formula                              
+        UCB[a] = G[s][a]["Q-value"] + c_ebc * math.sqrt(math.log(G[s]["N"])/G[s][a]["Na"])
+
+    # choose the relevant action that maximize the UCB formula    
+    a_UCB = max(UCB.items(), key=operator.itemgetter(1))[0]
+    return a_UCB
+
+"""
+
+"""
+def ActionSelection_Pair(s,G):
+    c = [0,2]           # Exploration coefficient bounds 
+    UCB = {}         # Dictionary to save the result of UCB for each action
+    
+    # CONSIDER ONLY RELEVANT ACTIONS 
+    for a in s.relevActions:
+        
+        # Compute normalised entropy based s.Entropy(a)
+        en = (c[1]-c[0])*s.Entropy(a) + c[0]
+        # Compute the adaptive explotration coefficient by rescaling with the 
+        # higher cost/reward
+        c_ebc = 5*en 
+        # Modified UCB formula                              
+        UCB[a] = G[s][a]["Q-value"] + c_ebc * math.sqrt(math.log(G[s]["N"])/G[s][a]["Na"])
 
     # choose the relevant action that maximize the UCB formula    
     a_UCB = max(UCB.items(), key=operator.itemgetter(1))[0]
@@ -125,7 +155,7 @@ def checkState(s):
 #----------------------------------------------------------------------------#        
     
               
-def Trial(s):
+def Trial(s,option):
     
     global G           # Make sure that I have access to the graph
     K = -5             # Internal parameter -> asociated cost to dead-ends
@@ -154,36 +184,31 @@ def Trial(s):
         # NOTE that (all the possible/only relevant) actions are tested.
         # NOTE that the childs are not created in the graph.
         aux = []          # empty list to ease the maximization
-        for a in s.actions:
+        
+        for a in s.relevActions: # ¡¡ Use s.relevActions to remove the init of
+                                 # lazy actions. Use s.actions instead for a 
+                                 #  complete initialisation !!
             
-            if a=="Stay":                    continue    #Remove lazy actions           
-            elif s.top    and a=="North":    continue    #if you want to con-
-            elif s.right  and a=="East":     continue    #sider only relevant
-            elif s.left   and a=="West":     continue    #actions. Remove if-else
-            elif s.bottom and a=="South":    continue    #to consider all actions
-            else :
-              
-                # Count the initialisation of this action as a visit to Node s
-                G[s]["N"]+=1 
-                
-                # Sample a successor according to the generative model
-                [successor, cost]= s.SampleChild(a)
-                
-                # the Qvalue is the inmediate cost/reward plus the long term
-                # cost/reward that is estimated through a rollout
-                G[s][a]={}
-                G[s][a]["Q-value"] = cost + Rollout(successor)
-                aux.append(G[s][a]["Q-value"])  
-                
-                # Register the visit for this pair s-a
-                G[s][a]["Na"]= 1
+            # Count the initialisation of this action as a visit to Node s
+            G[s]["N"]+=1 
+            
+            # Sample a successor according to the generative model
+            [successor, cost]= s.SampleChild(a)
+            
+            # the Qvalue is the inmediate cost/reward plus the long term
+            # cost/reward that is estimated through a rollout
+            G[s][a]={}
+            G[s][a]["Q-value"] = cost + Rollout(successor)
+            aux.append(G[s][a]["Q-value"])  
+            
+            # Register the visit for this pair s-a
+            G[s][a]["Na"]= 1
+                  
                 
         # Compute the Qvalue of the decision node (V(s)).Two approaches are valid.
         # OPTION1: Averaging the Qvalues ofits successor chance nodes.
         #          V(s) <- SUM[Na(s,a) . Q(s,a)]/N(s)
         """
-        for a in  s.transitions.keys():
-            G[s]["V"]+= G[s][a]["Na"] * G[s][a]["Q-value"]/G[s]["N"]
         """    
         # OPTION2: Taking into account only the optimal Q(s,a)
         #          V(s) <- max(Q(s,a)) | a in A
@@ -195,12 +220,10 @@ def Trial(s):
         return rv
     
     # 3) EXPAND THE NODE IF IT'S ALREADY IN THE GRAPH ------------------------
-        # To expand a node, UCT applies the action selection  
-        # strategy that is based on the UCB formula, this code provide two
-        # different functions to return the 'best' action:
-        #    -Actionselection(s,G)-> all actions, including "lazy" actions, are considered.
-        #    -RelevantActionSelection(s,G)-> only relevant actions are considered.
-    a_UCB = RelevantActionSelection(s,G)
+    
+    if   option == 0 : a_UCB = ActionSelection_Max(s,G)    
+    elif option == 1 : a_UCB = ActionSelection_Mean(s,G)
+    elif option == 2 : a_UCB = ActionSelection_Pair(s,G)
     
     # 4) SAMPLE A CHILD  PLAYING THIS ACTION ---------------------------------
     [successor,cost] = s.SampleChild(a_UCB)
@@ -221,7 +244,7 @@ def Trial(s):
         
     else :
             
-        QvaluePrime =  cost + Trial(successor)  
+        QvaluePrime =  cost + Trial(successor,option)  
         
     # 6) UPDATE THE COUNTERS -------------------------------------------------
         # The order between this step and step 5 could be reversed. This
@@ -239,17 +262,19 @@ def Trial(s):
     G[s][a_UCB]["Na"] += 1   
     
     # 7) UPDATE THE Q-VALUE OF THE PAIR (s,a_UCB)-----------------------------
+    
+        # OPTION 1 : classical POMCP-GO approach
     G[s][a_UCB]["Q-value"] += (QvaluePrime - G[s][a_UCB]["Q-value"]) / G[s][a_UCB]["Na"]
+    
+        # OPTION 2 : MinPOMCP-GO approach
+    
     
     
     # 8) UPDATE THE VALUE FUNCTION OF THE DECISSION NODE
     
     # OPTION 1: V(s) <- SUM[Na(s,a) . Q(s,a)]/N(s)
     """
-    G[s]["V"] = 0
-    for a in  s.transitions.keys():
-        G[s]["V"] += G[s][a]["Na"]*G[s][a]["Q-value"]/G[s]["N"]
-    
+        This is not the best approach
     """
     # OPTION 2: V(s) <- max Q(s,a) | a in A
     aux = []              
@@ -279,18 +304,32 @@ the current partial tree. The desired architecture for this variable is:
          s2:{...}
          }
 """
-def UCT_adativeCoefficient(s0, maxTrials):
+def UCT_adativeCoefficient(s0, maxTrials, option):
     
     nTrial = 0                         # initialize the trial counter
     global G                           # make a global variable so that all 
                                        # the functions can modify it
     G = {}                             # initialize a graph
-    Vs0 = 0
+    Vs0 = []
+    
+    # safety check
+    """
+    print("option:" , option)
+    if option == 0:
+        print("Adaptive coefficient based on Max Entropy")
+    elif option == 1:
+        print("Adaptive coefficient based on Mean Entropy")
+    elif option == 2:
+        print("Adaptive coefficient based on state-action pairs Entropy") 
+    else: 
+        print("Option error, choose an integer in [0,2]")
+        return
+    """
+    
     while nTrial < maxTrials :         # perform trials while possible
         
         nTrial += 1
-        Trial(s0)       
-    
+        Trial(s0,option)       
+        Vs0.append(G[s0]["V"])  
         
-    Vs0 = G[s0]["V"]    
     return G,Vs0      

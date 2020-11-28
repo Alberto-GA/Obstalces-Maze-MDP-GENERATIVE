@@ -1,19 +1,16 @@
 """
-                        UCT like algorithm V2
-This is the second versiond of the original code. The previous version was 
-adapted to work with a declarative model of the Obstacles-Maze-SSP_MDP. 
-However, this algorithm doesn't need to know the whole transition model. In
-fact, it doesn't need to instanciate all the possible states before starting.
-For these reasons this code has been enhanced to work only with a generative
-model that is described in SSP_GenerativeModel.py. Then, the algorithm will 
-take actions at given states that eventually will lead it to new states. As a
-consequence, this algorithm has an additional mission which consists in 
-identifying if the "new" state have been already visited. This is important 
-because new states are instanciated when a child is sampled but we only want to 
-keep one instance of each particular state.
+              First enhancement of UCT like algorithm V2
 
-This algorithm is an adptation of the classical UCT algorithm. It is based on 
-RTDP. Credits to Caroline Chanel.
+This is the first attempt to improve the performances of UCT. The approach of 
+this algorithm is based on tuning the exploration coefficient in accordance with 
+some domain-dependent information that was hard coded in the generative model.
+The idea was to increase the exploration in the states which are closer to 
+obstacles in order to find interesting rewards close to them and force the 
+solver to take risky actions. So in conclusion, the only difference with UCT 
+is inside the action-selection functions.
+
+WARNING: this code only works for the 3x4 grid map which has been the benchmark
+during the initial phase of the research.
 
 """
 #-------------------------------LIBRAIRES------------------------------------#
@@ -37,7 +34,7 @@ def Rollout(s):
     while nRollout < depth:
         
         # Stop the rollout if a dead-end is reached.
-        # NOTE: "the first state will never be a dead-end so payoff not 0"
+        # NOTE: "the first state will never be a dead-end so payoff>0"
         if s.obstacle : return payoff
         
         # The rollouts progress with random actions -> sample an action
@@ -70,13 +67,23 @@ the graph.
 
 """
 def ActionSelection(s,G):
-    c = 10           # Exploration coefficient 
-    UCB = {}         # Dictionary to save the result of UCB for each action
+    c = [0,2]           # Exploration coefficient bounds 
+    UCB = {}            # Dictionary to save the result of UCB for each action
     
-    for a in s.actions:          # UCB formula
-        UCB[a] = G[s][a]["Q-value"] + c * math.sqrt(math.log(G[s]["N"])/G[s][a]["Na"])
+    # CONSIDER ALL ACTIONS -> problems with loops...
+    for a in s.actions:
+        
+        # Compute normalised entropy based on the uncertainty parameter that I
+        # have defined (hardcoded) to characterise each state. Only for 3x4 
+        # grid... see generative model for more info.
+        en = (c[1]-c[0])*s.uncertainty + c[0]
+        # Compute the adaptive explotration coefficient by rescaling with the 
+        # higher cost/reward
+        c_ebc = 5*en 
+        # Modified UCB formula                              
+        UCB[a] = G[s][a]["Q-value"] + c_ebc * math.sqrt(math.log(G[s]["N"])/G[s][a]["Na"])
 
-    # choose the action that maximize the UCB formula    
+    # choose the relevant action that maximize the UCB formula    
     a_UCB = max(UCB.items(), key=operator.itemgetter(1))[0]
     return a_UCB
 
@@ -97,17 +104,25 @@ CONCLUSION: if you want to remove the "lazy" actions to kill loops of type
 s'=s, only relevant actions must be initialised!!! -> LOOK STEP 2
 
 """
-def RelevantActionSelection(s,G,c):
-    #c = 10          # Exploration coefficient 
+def RelevantActionSelection(s,G):
+    c = [0,2]           # Exploration coefficient bounds 
     UCB = {}         # Dictionary to save the result of UCB for each action
     
     # CONSIDER ONLY RELEVANT ACTIONS -> avoid infinite loops between 
     # action Selection and child sampling in the recursive call. However, 
     # this doesn't prevent from loops in the tree: e.g s0-s1-s5-s4-s0...
-    for a in s.relevActions:  # UCB formula
+    for a in s.relevActions:
         
-        UCB[a] = G[s][a]["Q-value"] + c * math.sqrt(math.log(G[s]["N"])/G[s][a]["Na"])
-      
+        # Compute normalised entropy based on the uncertainty parameter that I
+        # have defined (hardcoded) to characterise each state. Only for 3x4 
+        # grid... see generative model for more info.
+        en = (c[1]-c[0])*s.uncertainty + c[0]
+        # Compute the adaptive explotration coefficient by rescaling with the 
+        # higher cost/reward
+        c_ebc = 5*en 
+        # Modified UCB formula                              
+        UCB[a] = G[s][a]["Q-value"] + c_ebc * math.sqrt(math.log(G[s]["N"])/G[s][a]["Na"])
+
     # choose the relevant action that maximize the UCB formula    
     a_UCB = max(UCB.items(), key=operator.itemgetter(1))[0]
     return a_UCB
@@ -136,7 +151,7 @@ def checkState(s):
 #----------------------------------------------------------------------------#        
     
               
-def UCT_Trial(s,c):
+def Trial(s):
     
     global G           # Make sure that I have access to the graph
     K = -5             # Internal parameter -> asociated cost to dead-ends
@@ -146,7 +161,7 @@ def UCT_Trial(s,c):
         # decision epoch has been reached. In infinte horizon (disc. reward) 
         # MDP, the terminal states are the goals and the dead-ends.
         
-    if s.goal : return 0               # No cost to reach the goal->goal will never appear in G
+    if s.goal : return 0               # No cost to reach the goal
     elif s.obstacle: return K          # Penalty for dead-ends
         
     # 2) CHECK IF THE CURRENT STATE IS NEW -----------------------------------
@@ -165,7 +180,7 @@ def UCT_Trial(s,c):
         # NOTE that (all the possible/only relevant) actions are tested.
         # NOTE that the childs are not created in the graph.
         aux = []          # empty list to ease the maximization
-    
+        
         for a in s.relevActions: # ¡¡ Use s.relevActions to remove the init of
                                  # lazy actions. Use s.actions instead for a 
                                  #  complete initialisation !!
@@ -184,12 +199,12 @@ def UCT_Trial(s,c):
             
             # Register the visit for this pair s-a
             G[s][a]["Na"]= 1
+                  
                 
         # Compute the Qvalue of the decision node (V(s)).Two approaches are valid.
         # OPTION1: Averaging the Qvalues ofits successor chance nodes.
         #          V(s) <- SUM[Na(s,a) . Q(s,a)]/N(s)
         """
-
         """    
         # OPTION2: Taking into account only the optimal Q(s,a)
         #          V(s) <- max(Q(s,a)) | a in A
@@ -206,7 +221,7 @@ def UCT_Trial(s,c):
         # different functions to return the 'best' action:
         #    -Actionselection(s,G)-> all actions, including "lazy" actions, are considered.
         #    -RelevantActionSelection(s,G)-> only relevant actions are considered.
-    a_UCB = RelevantActionSelection(s,G,c)
+    a_UCB = RelevantActionSelection(s,G)
     
     # 4) SAMPLE A CHILD  PLAYING THIS ACTION ---------------------------------
     [successor,cost] = s.SampleChild(a_UCB)
@@ -227,7 +242,7 @@ def UCT_Trial(s,c):
         
     else :
             
-        QvaluePrime =  cost + UCT_Trial(successor,c)  
+        QvaluePrime =  cost + Trial(successor)  
         
     # 6) UPDATE THE COUNTERS -------------------------------------------------
         # The order between this step and step 5 could be reversed. This
@@ -243,6 +258,7 @@ def UCT_Trial(s,c):
         # be a promising strategy...   
     G[s]["N"] += 1
     G[s][a_UCB]["Na"] += 1   
+    
     # 7) UPDATE THE Q-VALUE OF THE PAIR (s,a_UCB)-----------------------------
     
         # OPTION 1 : classical POMCP-GO approach
@@ -252,7 +268,7 @@ def UCT_Trial(s,c):
     
     
     
-    # 8) UPDATE THE VALUE FUNCTION OF THE DECISION NODE
+    # 8) UPDATE THE VALUE FUNCTION OF THE DECISSION NODE
     
     # OPTION 1: V(s) <- SUM[Na(s,a) . Q(s,a)]/N(s)
     """
@@ -271,7 +287,7 @@ def UCT_Trial(s,c):
     
 #----------------------------------------------------------------------------#    
 """
-This is the skeleton of the UCT: it relies on the UCT_Trial method wich will
+This is the skeleton of the UCT: it relies on the UCT_Trial mnethod wich will
 update and refine the information in G, a global variable which represents
 the current partial tree. The desired architecture for this variable is:
     
@@ -285,19 +301,8 @@ the current partial tree. The desired architecture for this variable is:
          
          s2:{...}
          }
-
-Note that I've decided to use a dictionary becasue it is easy to visualize in 
-the variable explorer. However other data structures could be useful as well...
-
-The Main function needs three arguments:
-    1) Initial state
-    2) max number of trials
-    3) exploration coefficient
-
-The basic return is the whole tree so that it is possible to se the estimated
-value of the initial state, and the suggested policy solution.
 """
-def UCT_like(s0, maxTrials,c):
+def UCT_CustomCoefficient(s0, maxTrials):
     
     nTrial = 0                         # initialize the trial counter
     global G                           # make a global variable so that all 
@@ -307,7 +312,8 @@ def UCT_like(s0, maxTrials,c):
     while nTrial < maxTrials :         # perform trials while possible
         
         nTrial += 1
-        UCT_Trial(s0,c)
-        Vs0.append(G[s0]["V"])  
-        
-    return G,Vs0     
+        Trial(s0)
+        Vs0.append(G[s0]["V"])
+          
+   
+    return G,Vs0      

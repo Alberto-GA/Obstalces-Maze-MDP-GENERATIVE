@@ -3,21 +3,33 @@ import matplotlib.pyplot as plt
 import numpy as np
 from SSP_GenerativeModel import State
 from UCT import UCT_like
+from UCT_Custom import UCT_CustomCoefficient
 from UCT_EBC import UCT_adativeCoefficient
 from MCTS_LoopsBlocking import MCTS_Tplus
+from maxUCT import maxUCT_like
+from maxUCT_EBC import maxUCT_adaptive
+
+
 ##----------------------------------MAIN------------------------------------##
 
-s0 = State(0,0)                        # Instanciate the initial state
-maxTrials = 1000                     # Define the number of trials
+s0 = State(0,0)           # Instanciate the initial state
+maxTrials = 1000          # Define the number of trials
 Coefficient = 10          # Define the UCB coefficients to test
-A = []
+
+# It is interesting to test several times the solver algorithm because of its
+# stochastic nature. For this reason: firstly an empty list is created to 
+# store the final result of each attempt. And secondly a for loop is built to 
+# attempt and store. 
+A = []                    
 for i in range(0,1):
-    [Graph,Vs0]= MCTS_Tplus(s0, maxTrials,Coefficient)
+    [Graph,Vs0]= maxUCT_adaptive(s0, maxTrials, 5)
     A.append(Vs0[-1])
 
- 
 
-#--------------------------------CREATE PLOT---------------------------------
+##--------------------------------CREATE PLOT-------------------------------##
+# This section displays a plot showing the evolution of the Value of the ini-
+# tial state (only last attempt)
+
 
 # Create figure
 fig = plt.figure()
@@ -32,7 +44,11 @@ plt.legend()
 # Show the plot
 plt.show()
 
-#----------------------------SAVE RESULTS AS .TXT------------------------------
+
+##----------------------------SAVE RESULTS AS .TXT--------------------------##
+# This section writes the list A in a .txt to perform future statistical
+# studies and compare the performances of the algorithms.
+
 """
 a = np.array(A)
 mat = np.matrix(a)
